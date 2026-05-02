@@ -5176,34 +5176,14 @@ async function downloadQuotePDF() {
     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
                   (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
-    // === iOS：直接用 <a download>（iOS 14+ 會跳「在...中打開」選單）===
-    // 經驗法則：iOS 對「使用者實際手勢觸發的 <a download>」最寬容
-    // 不用 navigator.share，因為 PDF 產生時間 > 用戶手勢時效
+    // === iOS：產生 PDF 後顯示 modal，讓客戶在 modal 內按「📤 分享/儲存」===
+    // 重點：不在這裡直接呼叫 navigator.share（手勢已過期）
+    // 改在 modal 內的按鈕觸發 → 那是「客戶當下手勢」，iOS 一定接受
     if (isIOS) {
       if (typeof mobileLog === 'function') {
-        mobileLog(`[下載] iOS 路徑（用 <a download>）`);
+        mobileLog(`[下載] iOS 路徑（顯示 modal 含分享按鈕）`);
       }
-
-      // 直接觸發下載（iOS 會跳出「在...中打開」選單）
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      a.target = '_blank';  // 重要：iOS 需要 _blank 才會跳開啟選單
-      a.rel = 'noopener';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(url), 5000);
-
-      if (typeof mobileLog === 'function') {
-        mobileLog(`[下載] ✓ <a download> 已觸發`);
-      }
-
-      // 同時顯示備援 modal（如果上面失敗，使用者可手動點下載按鈕）
-      setTimeout(() => {
-        showUserDownloadModal(blob, filename);
-      }, 800);
+      showUserDownloadModal(blob, filename);
       return;
     }
 
@@ -5239,6 +5219,17 @@ function showUserDownloadModal(blob, filename) {
   const url = URL.createObjectURL(blob);
   const sizeKB = (blob.size / 1024).toFixed(1);
 
+  // 把 blob 暫存到 window 讓內部按鈕可以拿到
+  window.__pendingPdfBlob = blob;
+  window.__pendingPdfFilename = filename;
+
+  const canShareFiles = (() => {
+    try {
+      const file = new File([blob], filename, { type: 'application/pdf' });
+      return navigator.share && navigator.canShare && navigator.canShare({ files: [file] });
+    } catch (e) { return false; }
+  })();
+
   const modal = document.createElement('div');
   modal.id = '__user_download_modal__';
   modal.style.cssText = `
@@ -5261,30 +5252,63 @@ function showUserDownloadModal(blob, filename) {
         <div style="font-size: 11px; color: #B8956A; margin-top: 4px;">${sizeKB} KB</div>
       </div>
 
-      <!-- 主要動作：點擊下載 -->
-      <a href="${url}" download="${filename}" target="_blank" rel="noopener"
-         id="__user_dl_link__"
-         style="display: block; padding: 14px;
-                background: #B8956A; color: white;
-                text-align: center; text-decoration: none;
-                border-radius: 999px; font-size: 15px; font-weight: 700;
-                box-shadow: 0 4px 14px rgba(184,149,106,0.4);
-                margin-bottom: 12px;">
-        ⬇ 點此下載 PDF
-      </a>
+      ${canShareFiles ? `
+        <!-- 主要動作：分享（會跳系統分享面板，含 LINE / 儲存到檔案 等）-->
+        <button onclick="triggerPendingPdfShare()"
+                style="display: block; width: 100%; padding: 14px;
+                       background: #B8956A; color: white; border: none;
+                       text-align: center;
+                       border-radius: 999px; font-size: 15px; font-weight: 700;
+                       box-shadow: 0 4px 14px rgba(184,149,106,0.4);
+                       margin-bottom: 10px; cursor: pointer;
+                       font-family: inherit;">
+          📤 分享 / 儲存
+        </button>
 
-      <!-- 操作說明 -->
-      <div style="background: #FCFAF5; padding: 12px; border-radius: 10px;
-                  font-size: 12px; line-height: 1.7; color: #5C5248;">
-        <div style="font-weight: 700; margin-bottom: 4px; color: #2A2520;">
-          📱 iPhone 使用步驟：
+        <!-- 次要動作：直接下載 -->
+        <a href="${url}" download="${filename}" target="_blank" rel="noopener"
+           style="display: block; padding: 12px;
+                  background: #FCFAF5; color: #2A2520;
+                  text-align: center; text-decoration: none;
+                  border: 1.5px solid #B8956A;
+                  border-radius: 999px; font-size: 14px; font-weight: 700;
+                  margin-bottom: 12px;">
+          ⬇ 直接下載
+        </a>
+
+        <!-- 說明 -->
+        <div style="background: #FCFAF5; padding: 12px; border-radius: 10px;
+                    font-size: 12px; line-height: 1.7; color: #5C5248;">
+          <div style="font-weight: 700; margin-bottom: 4px; color: #2A2520;">
+            💡 點「分享 / 儲存」會跳出選單，可選：
+          </div>
+          📲 LINE　　🗂️ 儲存到檔案　　✉️ Mail<br>
+          📱 訊息　　📂 AirDrop　　🖨️ 列印
         </div>
-        1. 點上方按鈕 → PDF 在新分頁開啟<br>
-        2. 點右上角「<strong>⬆ 分享</strong>」按鈕<br>
-        3. 選「<strong>儲存到檔案</strong>」或「<strong>LINE</strong>」
-      </div>
+      ` : `
+        <!-- 沒有 canShare 支援：用 <a download> -->
+        <a href="${url}" download="${filename}" target="_blank" rel="noopener"
+           style="display: block; padding: 14px;
+                  background: #B8956A; color: white;
+                  text-align: center; text-decoration: none;
+                  border-radius: 999px; font-size: 15px; font-weight: 700;
+                  box-shadow: 0 4px 14px rgba(184,149,106,0.4);
+                  margin-bottom: 12px;">
+          ⬇ 點此下載 PDF
+        </a>
 
-      <button onclick="document.getElementById('__user_download_modal__').remove()"
+        <div style="background: #FCFAF5; padding: 12px; border-radius: 10px;
+                    font-size: 12px; line-height: 1.7; color: #5C5248;">
+          <div style="font-weight: 700; margin-bottom: 4px; color: #2A2520;">
+            📱 iPhone 使用步驟：
+          </div>
+          1. 點上方按鈕 → PDF 在新分頁開啟<br>
+          2. 點右上角「<strong>⬆ 分享</strong>」按鈕<br>
+          3. 選「<strong>儲存到檔案</strong>」或「<strong>LINE</strong>」
+        </div>
+      `}
+
+      <button onclick="closePendingPdfModal()"
               style="display: block; width: 100%; margin-top: 12px;
                      padding: 10px; border: 1px solid #DDD;
                      background: white; cursor: pointer; color: #5C5248;
@@ -5299,6 +5323,44 @@ function showUserDownloadModal(blob, filename) {
 
   // 自動釋放 URL 1 分鐘後（給用戶足夠時間點擊）
   setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
+/* 點擊 Modal 內的「分享」按鈕時觸發 navigator.share
+   重點：因為是「使用者當下手勢」內觸發，iOS Safari 不會拒絕 */
+async function triggerPendingPdfShare() {
+  const blob = window.__pendingPdfBlob;
+  const filename = window.__pendingPdfFilename;
+  if (!blob || !filename) {
+    showToast('⚠ PDF 已過期，請重新產生');
+    return;
+  }
+  try {
+    const file = new File([blob], filename, { type: 'application/pdf' });
+    if (typeof mobileLog === 'function') {
+      mobileLog('[分享按鈕] 觸發 navigator.share');
+    }
+    await navigator.share({
+      files: [file],
+      title: filename,
+    });
+    if (typeof mobileLog === 'function') {
+      mobileLog('[分享按鈕] ✓ 系統分享成功');
+    }
+    closePendingPdfModal();
+  } catch (e) {
+    if (e.name === 'AbortError') return;  // 用戶取消，不關 modal
+    if (typeof mobileLog === 'function') {
+      mobileLog(`[分享按鈕] 失敗: ${e.name}`, true);
+    }
+    showToast('⚠ 分享失敗：' + e.name + '，請改用直接下載');
+  }
+}
+
+function closePendingPdfModal() {
+  const modal = document.getElementById('__user_download_modal__');
+  if (modal) modal.remove();
+  window.__pendingPdfBlob = null;
+  window.__pendingPdfFilename = null;
 }
 
 /* 最終 fallback：在頁面內顯示 PDF iframe，並提供原生分享按鈕 */
@@ -5417,33 +5479,29 @@ async function shareQuoteToLine() {
     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
                   (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
-    // iOS：直接用 <a download> 下載 PDF + 顯示 LINE 引導 modal
-    // （避免 navigator.share 因 PDF 產生時間過長而 NotAllowedError）
+    // iOS：產生 PDF 後顯示 modal，客戶按 modal 內「📤 分享/儲存」觸發系統面板
+    // （PDF 產生會超過 1 秒，原本的 navigator.share 會被 iOS 視為手勢過期）
     if (isIOS) {
-      // 觸發下載 PDF
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      a.target = '_blank';
-      a.rel = 'noopener';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(url), 5000);
-
       if (typeof mobileLog === 'function') {
-        mobileLog(`[立即詢問] ✓ <a download> 已觸發`);
+        mobileLog(`[立即詢問] iOS 路徑：顯示 modal 含分享按鈕`);
       }
 
-      // 同時開 LINE 引導 modal（內含複製訊息 + 開 LINE 官方帳號按鈕）
+      // 顯示 PDF 分享 modal（modal 內有「📤 分享/儲存」按鈕跳系統面板）
+      showUserDownloadModal(blob, filename);
+
+      // 同時延遲開 LINE 引導 modal（如果客戶不分享，也能複製訊息傳給公司）
       setTimeout(() => {
+        // 但先檢查 PDF modal 是否還在 → 還在就不要開 LINE modal
+        if (document.getElementById('__user_download_modal__')) {
+          // PDF modal 還在，等客戶處理完
+          return;
+        }
         showLineSimpleGuide({
           estId, serviceTypeName, serviceDetail,
           total: fmt(total), itemCount: state.selected.length,
           lineMessage, shareLink: '',
         });
-      }, 500);
+      }, 3000);
       return;
     } else {
       // 桌面瀏覽器：自動下載 PDF
