@@ -5419,6 +5419,7 @@ function showInlinePdfViewer(pdfUrl, filename, blob) {
 }
 
 /* 立即詢問：產生 PDF + 跳系統分享面板（讓客戶選 LINE 或儲存檔案） */
+/* 立即詢問：顯示 LINE 訊息 modal，讓客戶複製訊息後跳轉官方 LINE */
 async function shareQuoteToLine() {
   if (state.selected.length === 0) {
     showToast('⚠ 沒有可下載的工項');
@@ -5450,7 +5451,7 @@ async function shareQuoteToLine() {
       serviceDetail = `${state.bathroomCount} 間`;
     }
 
-    // 簡短版 LINE 訊息
+    // 簡短版 LINE 訊息（讓客戶複製貼到 LINE）
     const lineMessage =
       `您好，我透過人文居家設計線上估價工具完成估價：\n` +
       `📋 估價編號：${estId}\n` +
@@ -5458,69 +5459,17 @@ async function shareQuoteToLine() {
       `💰 金額：新台幣 ${fmt(total)}\n` +
       `現場安排，麻煩您回覆，謝謝！`;
 
-    // === 同時產生 PDF + 跳系統分享面板 ===
-    showToast('⏳ 正在產生 PDF + LINE 訊息...');
-
-    if (typeof html2pdf === 'undefined') {
-      // 沒 PDF 模組就只開 LINE
-      showLineSimpleGuide({ estId, serviceTypeName, serviceDetail,
-                            total: fmt(total), itemCount: state.selected.length,
-                            lineMessage, shareLink: '' });
-      return;
-    }
-
-    // 產生 PDF Blob
-    const filename = `人文居家_報價單_${estId}.pdf`;
-    const blob = await generateQuotePdfBlob(filename);
-    if (typeof mobileLog === 'function') {
-      mobileLog(`[立即詢問] PDF 產生成功 ${(blob.size/1024).toFixed(1)} KB`);
-    }
-
-    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-                  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-
-    // iOS：產生 PDF 後顯示 modal，客戶按 modal 內「📤 分享/儲存」觸發系統面板
-    // （PDF 產生會超過 1 秒，原本的 navigator.share 會被 iOS 視為手勢過期）
-    if (isIOS) {
-      if (typeof mobileLog === 'function') {
-        mobileLog(`[立即詢問] iOS 路徑：顯示 modal 含分享按鈕`);
-      }
-
-      // 顯示 PDF 分享 modal（modal 內有「📤 分享/儲存」按鈕跳系統面板）
-      showUserDownloadModal(blob, filename);
-
-      // 同時延遲開 LINE 引導 modal（如果客戶不分享，也能複製訊息傳給公司）
-      setTimeout(() => {
-        // 但先檢查 PDF modal 是否還在 → 還在就不要開 LINE modal
-        if (document.getElementById('__user_download_modal__')) {
-          // PDF modal 還在，等客戶處理完
-          return;
-        }
-        showLineSimpleGuide({
-          estId, serviceTypeName, serviceDetail,
-          total: fmt(total), itemCount: state.selected.length,
-          lineMessage, shareLink: '',
-        });
-      }, 3000);
-      return;
-    } else {
-      // 桌面瀏覽器：自動下載 PDF
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
-      showToast('✓ PDF 已下載，請開啟 LINE 諮詢');
-    }
-
-    // 顯示 LINE 引導 modal（讓客戶複製訊息 + 開 LINE 官方帳號）
+    // 直接顯示 LINE 引導 modal（不產生 PDF）
+    // - 客戶可以「複製訊息」+「開啟官方 LINE」
+    // - 如果要 PDF 請走「下載 PDF」按鈕
     showLineSimpleGuide({
-      estId, serviceTypeName, serviceDetail,
-      total: fmt(total), itemCount: state.selected.length,
-      lineMessage, shareLink: '',
+      estId,
+      serviceTypeName,
+      serviceDetail,
+      total: fmt(total),
+      itemCount: state.selected.length,
+      lineMessage,
+      shareLink: '',
     });
 
   } catch (e) {
