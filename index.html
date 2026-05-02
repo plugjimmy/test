@@ -5176,38 +5176,34 @@ async function downloadQuotePDF() {
     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
                   (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
-    // === iOS：用 Web Share API 喚起系統分享面板 ===
-    // 這就是您要的：LINE、Mail、儲存到檔案 等選項，不會開新分頁
+    // === iOS：直接用 <a download>（iOS 14+ 會跳「在...中打開」選單）===
+    // 經驗法則：iOS 對「使用者實際手勢觸發的 <a download>」最寬容
+    // 不用 navigator.share，因為 PDF 產生時間 > 用戶手勢時效
     if (isIOS) {
       if (typeof mobileLog === 'function') {
-        mobileLog(`[下載] iOS 路徑開始`);
-        mobileLog(`[下載] location.protocol: ${window.location.protocol}`);
+        mobileLog(`[下載] iOS 路徑（用 <a download>）`);
       }
 
-      // 先試 navigator.share（如果是直接 https 開啟，這個會成功）
-      if (navigator.share) {
-        try {
-          const pdfFile = new File([blob], filename, { type: 'application/pdf' });
-          await navigator.share({ files: [pdfFile], title: filename });
-          if (typeof mobileLog === 'function') {
-            mobileLog('[下載] ✅ navigator.share 成功');
-          }
-          showToast('✓ 請選 LINE 或儲存到檔案');
-          return;
-        } catch (shareErr) {
-          if (shareErr.name === 'AbortError') return;
-          if (typeof mobileLog === 'function') {
-            mobileLog(`[下載] navigator.share 失敗: ${shareErr.name}（試 fallback）`);
-          }
-        }
-      }
+      // 直接觸發下載（iOS 會跳出「在...中打開」選單）
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.target = '_blank';  // 重要：iOS 需要 _blank 才會跳開啟選單
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
 
-      // Fallback：在頁面內顯示「使用者主動點擊」的下載連結
-      // 因為 iOS 對「使用者實際手勢觸發」的 <a> 連結比較寬容
       if (typeof mobileLog === 'function') {
-        mobileLog('[下載] 顯示使用者下載連結 modal');
+        mobileLog(`[下載] ✓ <a download> 已觸發`);
       }
-      showUserDownloadModal(blob, filename);
+
+      // 同時顯示備援 modal（如果上面失敗，使用者可手動點下載按鈕）
+      setTimeout(() => {
+        showUserDownloadModal(blob, filename);
+      }, 800);
       return;
     }
 
@@ -5421,27 +5417,34 @@ async function shareQuoteToLine() {
     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
                   (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
-    // iOS / 行動裝置：跳系統分享面板（含 LINE / Mail / 儲存到檔案）
-    if (isIOS && navigator.share) {
-      try {
-        const pdfFile = new File([blob], filename, { type: 'application/pdf' });
-        await navigator.share({
-          files: [pdfFile],
-          title: filename,
-          text: lineMessage,
-        });
-        if (typeof mobileLog === 'function') {
-          mobileLog('[立即詢問] ✓ 系統分享成功');
-        }
-        showToast('✓ 請選 LINE 直接傳送（自動帶入訊息）');
-        return;
-      } catch (shareErr) {
-        if (shareErr.name === 'AbortError') return;  // 用戶取消
-        if (typeof mobileLog === 'function') {
-          mobileLog(`[立即詢問] 分享失敗: ${shareErr.name}`, true);
-        }
-        // 失敗 fallback → 開 LINE 引導 modal + 提供下載按鈕
+    // iOS：直接用 <a download> 下載 PDF + 顯示 LINE 引導 modal
+    // （避免 navigator.share 因 PDF 產生時間過長而 NotAllowedError）
+    if (isIOS) {
+      // 觸發下載 PDF
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+
+      if (typeof mobileLog === 'function') {
+        mobileLog(`[立即詢問] ✓ <a download> 已觸發`);
       }
+
+      // 同時開 LINE 引導 modal（內含複製訊息 + 開 LINE 官方帳號按鈕）
+      setTimeout(() => {
+        showLineSimpleGuide({
+          estId, serviceTypeName, serviceDetail,
+          total: fmt(total), itemCount: state.selected.length,
+          lineMessage, shareLink: '',
+        });
+      }, 500);
+      return;
     } else {
       // 桌面瀏覽器：自動下載 PDF
       const url = URL.createObjectURL(blob);
