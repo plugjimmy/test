@@ -2720,7 +2720,7 @@ function showToast(msg) {
 }
 
 /* 手機 debug：log 只進 console，不顯示到畫面（如需 debug 改成 SHOW_MOBILE_LOG = true）*/
-const SHOW_MOBILE_LOG = false;
+const SHOW_MOBILE_LOG = true;
 function mobileLog(msg, isError) {
   if (isError) console.warn(msg); else console.log(msg);
   if (!SHOW_MOBILE_LOG) return;
